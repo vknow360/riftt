@@ -59,6 +59,13 @@ public class MainFrame extends JFrame {
         getContentPane().setBackground(new Color(245, 245, 245)); // Light background
         setLayout(new BorderLayout());
 
+        // Set Icon
+        try {
+            setIconImage(Toolkit.getDefaultToolkit().getImage(getClass().getResource("/icon.png")));
+        } catch (Exception e) {
+            System.err.println("Could not load icon: " + e.getMessage());
+        }
+
         // --- Toolbar ---
         JToolBar toolBar = new JToolBar();
         toolBar.setFloatable(false);
