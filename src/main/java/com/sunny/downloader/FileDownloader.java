@@ -1,25 +1,18 @@
 package com.sunny.downloader;
 
-import com.sunny.database.DownloadDAO;
-import com.sunny.exceptions.DownloadFailedException;
-import com.sunny.model.Download;
-
-import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class FileDownloader {
-
-    private static final String TAG = "FileDownloader";
-
-    private static final int BUFFER_SIZE = 8192; // Increased buffer size
 
     private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-    private void applyCommon(HttpURLConnection conn, String fileUrl) {
-        conn.setInstanceFollowRedirects(true);
+    public static void applyCommon(HttpURLConnection conn, String fileUrl) {
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(30000);
         conn.setRequestProperty("User-Agent", USER_AGENT);
@@ -29,12 +22,88 @@ public class FileDownloader {
         conn.setRequestProperty("Accept-Encoding", "identity");
         try {
             URL u = new URL(fileUrl);
-            conn.setRequestProperty("Referer", u.getProtocol() + "://" + u.getHost() + "/");
-        } catch (Exception ignored) {}
+            conn.setRequestProperty("Referer", u.getProtocol() + "://" + u.getHost());
+        } catch (Exception ignored) {
+        }
     }
 
-    private boolean isOk(int code) { return code >= 200 && code < 300; }
-    private boolean isPartial(int code) { return code == HttpURLConnection.HTTP_PARTIAL; }
+    private boolean isOk(int code) {
+        return code >= 200 && code < 300;
+    }
+
+    private boolean isPartial(int code) {
+        return code == HttpURLConnection.HTTP_PARTIAL;
+    }
+
+    /**
+     * Helper method to establish a connection while preserving cookies across
+     * redirects.
+     * This prevents HTTP 403 errors on servers that issue cookies during the
+     * redirect chain.
+     */
+
+    public static HttpURLConnection safeOpenConnection(String urlStr, String method, String rangeHeader)
+            throws Exception {
+        int redirectCount = 0;
+        Map<String, String> cookieMap = new HashMap<>();
+
+        while (redirectCount < 20) {
+
+            URL url = new URL(urlStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+
+            applyCommon(conn, urlStr);
+
+            conn.setInstanceFollowRedirects(false);
+            conn.setRequestMethod(method);
+
+            // Send cookies
+            if (!cookieMap.isEmpty()) {
+                String cookieHeader = cookieMap.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue())
+                        .collect(Collectors.joining("; "));
+                conn.setRequestProperty("Cookie", cookieHeader);
+            }
+
+            if (rangeHeader != null)
+                conn.setRequestProperty("Range", rangeHeader);
+
+            int status = conn.getResponseCode();
+
+            if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+
+                // --- Read all Set-Cookie headers ---
+                List<String> setCookies = conn.getHeaderFields().get("Set-Cookie");
+                if (setCookies != null) {
+                    for (String sc : setCookies) {
+                        String[] parts = sc.split(";", 2);
+                        String[] kv = parts[0].split("=", 2);
+                        if (kv.length == 2)
+                            cookieMap.put(kv[0].trim(), kv[1].trim());
+                    }
+                }
+
+                // Redirect URL
+                String newUrl = conn.getHeaderField("Location");
+                if (newUrl == null)
+                    throw new Exception("Redirect with no Location header");
+
+                urlStr = new URL(url, newUrl).toString();
+
+                // RFC: 302/303 should become GET
+                if (status == 302 || status == 303)
+                    method = "GET";
+
+                conn.disconnect();
+                redirectCount++;
+                continue;
+            }
+
+            return conn;
+        }
+
+        throw new Exception("Too many redirects");
+
+    }
 
     /**
      * Check if the server supports range requests (multi-threading)
@@ -43,10 +112,7 @@ public class FileDownloader {
     public boolean supportsRangeRequests(String fileUrl) {
         HttpURLConnection conn = null;
         try {
-            URL url = new URL(fileUrl);
-            conn = (HttpURLConnection) url.openConnection();
-            applyCommon(conn, fileUrl);
-            conn.setRequestMethod("HEAD");
+            conn = safeOpenConnection(fileUrl, "HEAD", null);
 
             int responseCode = conn.getResponseCode();
             System.out.println("Response code for HEAD request: " + responseCode);
@@ -59,15 +125,12 @@ public class FileDownloader {
         } catch (Exception e) {
             System.err.println("HEAD range probe failed: " + e.getMessage());
         } finally {
-            if (conn != null) conn.disconnect();
+            if (conn != null)
+                conn.disconnect();
         }
 
         try {
-            URL url = new URL(fileUrl);
-            conn = (HttpURLConnection) url.openConnection();
-            applyCommon(conn, fileUrl);
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Range", "bytes=0-0");
+            conn = safeOpenConnection(fileUrl, "GET", "bytes=0-0");
 
             int responseCode = conn.getResponseCode();
             System.out.println("Response code for GET range probe: " + responseCode);
@@ -82,208 +145,64 @@ public class FileDownloader {
             System.err.println("GET range probe failed: " + e.getMessage());
             return false;
         } finally {
-            if (conn != null) conn.disconnect();
+            if (conn != null)
+                conn.disconnect();
         }
     }
 
     /**
-     * Download file with progress reporting for single-threaded downloads
+     * Get file size using HEAD or GET
      */
-    public void downloadFileWithProgress(String fileUrl, String savePath,
-                                         DownloadManager manager, int downloadId)
-            throws DownloadFailedException {
+    public long getFileSize(String fileUrl) {
         HttpURLConnection conn = null;
-        FileOutputStream outputStream = null;
-        InputStream inputStream = null;
 
         try {
-            URL url = new URL(fileUrl);
-            conn = (HttpURLConnection) url.openConnection();
-            applyCommon(conn, fileUrl);
-            conn.setRequestMethod("GET");
+            conn = safeOpenConnection(fileUrl, "HEAD", null);
 
             int responseCode = conn.getResponseCode();
-            System.out.println("Response code for GET request: " + responseCode);
-
-            if (!isOk(responseCode)) {
-                throw new Exception("Server returned HTTP " + responseCode
-                        + " " + conn.getResponseMessage());
-            }
-
-            inputStream = conn.getInputStream();
-            outputStream = new FileOutputStream(savePath);
-
-            byte[] buffer = new byte[BUFFER_SIZE];
-            int bytesRead;
-            long bytesBuffer = 0;
-            long reportThreshold = 102400; // Report every 100KB
-
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                outputStream.write(buffer, 0, bytesRead);
-                bytesBuffer += bytesRead;
-
-                // Report progress periodically
-                if (bytesBuffer >= reportThreshold) {
-                    manager.onChunkProgress(downloadId, bytesBuffer);
-                    bytesBuffer = 0;
-                }
-            }
-
-            // Report remaining bytes
-            if (bytesBuffer > 0) {
-                manager.onChunkProgress(downloadId, bytesBuffer);
-            }
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            throw new DownloadFailedException("Download Failed: " + e.getMessage());
-        } finally {
-            try {
-                if (outputStream != null) outputStream.close();
-                if (inputStream != null) inputStream.close();
-                if (conn != null) conn.disconnect();
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        }
-    }
-
-    public void downloadFile(String fileUrl, String savePath) throws DownloadFailedException {
-        HttpURLConnection conn = null;
-        FileOutputStream outputStream = null;
-        InputStream inputStream = null;
-
-        try{
-            URL url = new URL(fileUrl);
-
-            conn = (HttpURLConnection) url.openConnection();
-            applyCommon(conn, fileUrl);
-            conn.setRequestMethod("GET");
-
-            int responseCode = conn.getResponseCode();
-
-            if(!isOk(responseCode)){
-                throw new Exception("Server returned HTTP " + responseCode
-                        + " " + conn.getResponseMessage());
-            }
-
-            inputStream = conn.getInputStream();
-            outputStream = new FileOutputStream(savePath);
-
-            byte[] buffer = new byte[BUFFER_SIZE];
-            int bytesRead;
-
-            while((bytesRead = inputStream.read(buffer)) != -1){
-                outputStream.write(buffer, 0, bytesRead);
-            }
-
-        } catch (Exception e) {
-            throw new DownloadFailedException(e.getMessage());
-        } finally {
-            try {
-                if(outputStream != null) outputStream.close();
-                if(inputStream != null) inputStream.close();
-                if(conn != null) conn.disconnect();
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        }
-    }
-
-    public long getFileSize(String fileUrl){
-        HttpURLConnection conn = null;
-
-        try{
-            URL urlObj = new URL(fileUrl);
-            conn = (HttpURLConnection) urlObj.openConnection();
-            applyCommon(conn, fileUrl);
-            conn.setRequestMethod("HEAD");
-
-            int responseCode = conn.getResponseCode();
-            if(isOk(responseCode)){
+            if (isOk(responseCode)) {
                 long fileSize = conn.getContentLengthLong();
-                if(fileSize > 0){
+                if (fileSize > 0) {
                     return fileSize;
                 }
             }
         } catch (Exception e) {
             System.err.println("HEAD getFileSize failed: " + e.getMessage());
         } finally {
-            if(conn != null){
+            if (conn != null) {
                 conn.disconnect();
             }
         }
 
         try {
-            URL urlObj = new URL(fileUrl);
-            conn = (HttpURLConnection) urlObj.openConnection();
-            applyCommon(conn, fileUrl);
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("Range", "bytes=0-0");
+            conn = safeOpenConnection(fileUrl, "GET", "bytes=0-0");
 
             int responseCode = conn.getResponseCode();
             if (isPartial(responseCode)) {
-                String contentRange = conn.getHeaderField("Content-Range"); // e.g., "bytes 0-0/123456"
+                String contentRange = conn.getHeaderField("Content-Range"); // e.g.,
+                                                                            // "bytes
+                                                                            // 0-0/123456"
                 if (contentRange != null && contentRange.contains("/")) {
                     String totalStr = contentRange.substring(contentRange.lastIndexOf('/') + 1).trim();
                     try {
                         long total = Long.parseLong(totalStr);
-                        if (total > 0) return total;
-                    } catch (NumberFormatException ignored) {}
+                        if (total > 0)
+                            return total;
+                    } catch (NumberFormatException ignored) {
+                    }
                 }
             } else if (isOk(responseCode)) {
                 long fileSize = conn.getContentLengthLong();
-                if (fileSize > 0) return fileSize;
+                if (fileSize > 0)
+                    return fileSize;
             }
         } catch (Exception e) {
             System.err.println("GET range getFileSize failed: " + e.getMessage());
         } finally {
-            if (conn != null) conn.disconnect();
+            if (conn != null)
+                conn.disconnect();
         }
 
         return -1;
-    }
-
-    public void resumeDownload(int id) throws DownloadFailedException {
-        HttpURLConnection httpConn = null;
-        FileOutputStream outputStream = null;
-        InputStream inputStream = null;
-        try {
-            Download download = new DownloadDAO().getDownloadById(id);
-            URL url = new URL(download.getUrl());
-            httpConn = (HttpURLConnection) url.openConnection();
-            applyCommon(httpConn, download.getUrl());
-            httpConn.setRequestProperty("Range", "bytes=" + download.getDownloadedSize() + "-");
-
-            int responseCode = httpConn.getResponseCode();
-
-            if(responseCode != HttpURLConnection.HTTP_PARTIAL){
-                throw new Exception("Resume not supported");
-            }
-
-            inputStream = httpConn.getInputStream();
-            outputStream = new FileOutputStream(download.getDownloadPath(), true);
-
-            byte[] buffer = new byte[BUFFER_SIZE];
-            int bytesRead;
-            long totalBytesRead = download.getDownloadedSize();
-
-            while((bytesRead = inputStream.read(buffer)) != -1){
-                outputStream.write(buffer, 0, bytesRead);
-                totalBytesRead += bytesRead;
-            }
-            download.setDownloadedSize(totalBytesRead);
-            new DownloadDAO().updateDownload(download);
-        } catch (Exception e){
-            throw new DownloadFailedException(e.getMessage());
-        } finally {
-            try {
-                if(outputStream != null) outputStream.close();
-                if(inputStream != null) inputStream.close();
-                if(httpConn != null) httpConn.disconnect();
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        }
     }
 }

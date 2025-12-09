@@ -18,15 +18,15 @@ public class DatabaseManager {
 
     private Connection connection;
 
-    private DatabaseManager(){
+    private DatabaseManager() {
         DB_PATH = getDBPath();
     }
 
-    public Connection getConnection(){
+    public Connection getConnection() {
         try {
-            if(connection == null || connection.isClosed()){
-                synchronized (DatabaseManager.class){
-                    if(connection == null || connection.isClosed()){
+            if (connection == null || connection.isClosed()) {
+                synchronized (DatabaseManager.class) {
+                    if (connection == null || connection.isClosed()) {
                         connection = DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
                     }
                 }
@@ -38,7 +38,7 @@ public class DatabaseManager {
     }
 
     public void closeConnection() {
-        if(connection != null){
+        if (connection != null) {
             try {
                 connection.close();
             } catch (Exception e) {
@@ -47,7 +47,7 @@ public class DatabaseManager {
         }
     }
 
-    public void initializeDatabase(){
+    public void initializeDatabase() {
 
         String sql = "CREATE TABLE IF NOT EXISTS downloads (\n" +
                 "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
@@ -62,22 +62,33 @@ public class DatabaseManager {
                 "    thread_count INTEGER DEFAULT 1\n" +
                 ");";
 
+        String chunksSql = "CREATE TABLE IF NOT EXISTS download_chunks (\n" +
+                "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
+                "    download_id INTEGER,\n" +
+                "    start_byte LONG,\n" +
+                "    end_byte LONG,\n" +
+                "    current_offset LONG,\n" +
+                "    status VARCHAR(20),\n" +
+                "    FOREIGN KEY(download_id) REFERENCES downloads(id) ON DELETE CASCADE\n" +
+                ");";
+
         try (Statement stmt = getConnection().createStatement()) {
             stmt.execute(sql);
-        }catch (Exception e){
+            stmt.execute(chunksSql);
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    public static DatabaseManager getInstance(){
-        if(instance == null){
+    public static DatabaseManager getInstance() {
+        if (instance == null) {
             instance = new DatabaseManager();
             instance.initializeDatabase();
         }
         return instance;
     }
 
-    private String getDBPath(){
+    private String getDBPath() {
         String appDataPath = FileUtils.getAppDataDirectory();
         return appDataPath + File.separator + DB_NAME;
     }

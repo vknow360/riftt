@@ -11,7 +11,8 @@ import java.util.List;
 public class DownloadDAO {
 
     public int insertDownload(Download download) {
-        String sql = "INSERT INTO downloads (filename, url, file_size, downloaded_size, status, download_path, start_time, end_time, thread_count) " +
+        String sql = "INSERT INTO downloads (filename, url, file_size, downloaded_size, status, download_path, start_time, end_time, thread_count) "
+                +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement st = DatabaseManager.getInstance().getConnection()
@@ -47,7 +48,7 @@ public class DownloadDAO {
         }
     }
 
-    public void updateDownloadStatus(int downloadId, DownloadStatus status){
+    public void updateDownloadStatus(int downloadId, DownloadStatus status) {
         String sql = "UPDATE downloads SET status = ? WHERE id = ?";
         try (PreparedStatement st = DatabaseManager.getInstance().getConnection().prepareStatement(sql)) {
             st.setString(1, status.name());
@@ -68,8 +69,6 @@ public class DownloadDAO {
             throw new RuntimeException("Failed to update end time", e);
         }
     }
-
-
 
     private void setFields(Download download, PreparedStatement st) throws SQLException {
         st.setString(1, download.getFilename());
@@ -104,7 +103,7 @@ public class DownloadDAO {
         String sql = "SELECT * FROM downloads";
 
         try (PreparedStatement st = DatabaseManager.getInstance().getConnection().prepareStatement(sql);
-             ResultSet rs = st.executeQuery()) {
+                ResultSet rs = st.executeQuery()) {
 
             while (rs.next()) {
                 downloads.add(mapResultSetToDownload(rs));
@@ -143,6 +142,15 @@ public class DownloadDAO {
         }
     }
 
+    public void clearAllDownloads() {
+        String sql = "DELETE FROM downloads";
+        try (Statement st = DatabaseManager.getInstance().getConnection().createStatement()) {
+            st.executeUpdate(sql);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to clear all downloads", e);
+        }
+    }
+
     private Download mapResultSetToDownload(ResultSet rs) throws SQLException {
         Download download = new Download();
         download.setId(rs.getInt("id"));
@@ -158,7 +166,7 @@ public class DownloadDAO {
         return download;
     }
 
-    public void updateDownloadedSize(int downloadId, long bytesToAdd) {
+    public synchronized void updateDownloadedSize(int downloadId, long bytesToAdd) {
         String sql = "UPDATE downloads SET downloaded_size = downloaded_size + ? WHERE id = ?";
         try (PreparedStatement st = DatabaseManager.getInstance().getConnection().prepareStatement(sql)) {
             st.setLong(1, bytesToAdd);

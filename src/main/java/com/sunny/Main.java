@@ -1,55 +1,43 @@
 package com.sunny;
 
+import com.sunny.core.IChunkRepository;
+import com.sunny.core.IDownloadRepository;
+import com.sunny.core.ILogger;
+import com.sunny.core.ISettingsProvider;
+import com.sunny.desktop.DesktopLogger;
+import com.sunny.desktop.DesktopSettingsProvider;
+import com.sunny.desktop.JdbcChunkRepository;
+import com.sunny.desktop.JdbcDownloadRepository;
 import com.sunny.downloader.DownloadManager;
-import com.sunny.model.Download;
-import com.sunny.model.DownloadStatus;
+import com.sunny.ui.MainFrame;
+
+import javax.swing.*;
 
 public class Main {
 
     public static void main(String[] args) {
-        long start = System.currentTimeMillis();
-        DownloadManager manager = null;
+        // Use FlatLaf if available, otherwise System L&F
         try {
-            manager = new DownloadManager(3, 4);
-            System.out.println("Download Manager initialized with In-Memory Coordinator");
-
-            Download download = new Download();
-            download.setFilename("500MB.zip");
-            download.setUrl("https://mmatechnical.com/Download/Download-Test-File/(MMA)-500MB.zip");
-            download.setDownloadPath("C:\\Users\\vknow\\Downloads\\500MB.zip");
-            download.setThreadCount(16);
-
-
-            int downloadId = manager.addDownload(download);
-            System.out.println("Download added with ID: " + downloadId);
-
-            manager.startDownload(downloadId);
-            System.out.println("Download started!");
-
-            do {
-                Thread.sleep(1000);
-                double progress = manager.getDownloadProgress(downloadId);
-                System.out.printf("Progress: %.2f%%\n", progress);
-
-            } while (manager.getDownloadStatus(downloadId) != DownloadStatus.COMPLETED && manager.getDownloadStatus(downloadId) != DownloadStatus.FAILED);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if(manager != null) {
-                manager.shutDown();
-            }
-            long end = System.currentTimeMillis();
-            System.out.println(parseTime(end-start));
+            UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
+        } catch (Exception ignored) {
+            ignored.printStackTrace();
         }
-    }
 
-    private static String parseTime(long time) {
-        long seconds = time / 1000;
-        long minutes = seconds / 60;
-        long hours = minutes / 60;
-        seconds %= 60;
-        minutes %= 60;
-        return String.format("%02d:%02d:%02d", hours, minutes, seconds);
+        SwingUtilities.invokeLater(() -> {
+            // 1. Dependency Injection Setup
+            IDownloadRepository downloadRepo = new JdbcDownloadRepository();
+            IChunkRepository chunkRepo = new JdbcChunkRepository();
+            ISettingsProvider settings = new DesktopSettingsProvider();
+            ILogger logger = new DesktopLogger();
+
+            // 2. Create Core Manager with Dependencies
+            DownloadManager manager = new DownloadManager(downloadRepo, chunkRepo, settings, logger);
+
+            // 3. Create UI
+            MainFrame frame = new MainFrame(manager);
+            frame.showFrame();
+
+            Runtime.getRuntime().addShutdownHook(new Thread(manager::shutDown));
+        });
     }
 }

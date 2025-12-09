@@ -1,58 +1,41 @@
 package com.sunny.downloader;
 
+import com.sunny.core.IChunkRepository;
+import com.sunny.core.ILogger;
+import com.sunny.model.DownloadChunk;
+
 import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.concurrent.Callable;
 
 public class DownloadTask implements Callable<ChunkResult> {
 
     private final String fileUrl;
     private final String savePath;
-    private final long startByte;
-    private final long endByte;
-
-    private final int taskId;
+    private final DownloadChunk chunk;
+    private final IChunkRepository chunkRepo; // INTERFACE
+    private final DownloadManager downloadManager;
+    private final int downloadId;
+    private final ILogger logger; // INTERFACE
 
     private volatile boolean isPaused = false;
     private volatile boolean isStopped = false;
 
-    private final DownloadManager downloadManager;
-    private final int downloadId;
-
-    private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-    private void applyCommon(HttpURLConnection conn, String fileUrl) {
-        conn.setInstanceFollowRedirects(true);
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(30000);
-        conn.setRequestProperty("User-Agent", USER_AGENT);
-        conn.setRequestProperty("Accept", "*/*");
-        conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
-        conn.setRequestProperty("Connection", "keep-alive");
-        conn.setRequestProperty("Accept-Encoding", "identity");
-        try {
-            URL u = new URL(fileUrl);
-            conn.setRequestProperty("Referer", u.getProtocol() + "://" + u.getHost() + "/");
-        } catch (Exception ignored) {}
-    }
-
     public DownloadTask(DownloadManager downloadManager,
-                        int downloadId,
-                        String fileUrl,
-                        String saveFile,
-                        long startByte,
-                        long endByte,
-                        int taskId) {
+            int downloadId,
+            String fileUrl,
+            String saveFile,
+            DownloadChunk chunk,
+            IChunkRepository chunkRepo, // Inject Interface
+            ILogger logger) {
         this.downloadManager = downloadManager;
         this.downloadId = downloadId;
         this.fileUrl = fileUrl;
         this.savePath = saveFile;
-        this.startByte = startByte;
-        this.endByte = endByte;
-        this.taskId = taskId;
+        this.chunk = chunk;
+        this.chunkRepo = chunkRepo;
+        this.logger = logger;
     }
 
     @Override
@@ -61,90 +44,167 @@ public class DownloadTask implements Callable<ChunkResult> {
         InputStream inputStream = null;
         RandomAccessFile localFile = null;
 
-        long totalRead = 0;
+        long currentOffset = chunk.getCurrentOffset();
+        long endByte = chunk.getEndByte();
+
+        if (currentOffset > endByte) {
+            return new ChunkResult(chunk.getId(), 0, 0, null);
+        }
+
+        int retryCount = 0;
+        final int MAX_RETRIES = 20;
 
         try {
             localFile = new RandomAccessFile(savePath, "rw");
-            URL url = new URL(fileUrl);
-            conn = (HttpURLConnection) url.openConnection();
-            String byteRange = "bytes=" + startByte + "-" + endByte;
-            conn.setRequestProperty("Range", byteRange);
-            applyCommon(conn, fileUrl);
 
-            int responseCode = conn.getResponseCode();
-            System.out.println("Response code for thread " + taskId + ": " + responseCode);
-            if(responseCode != HttpURLConnection.HTTP_PARTIAL){
-                throw new Exception("Server does not support multi-threading");
-            }
+            while (currentOffset <= endByte && !isStopped) {
 
-            inputStream = conn.getInputStream();
-            localFile.seek(startByte);
-
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-
-            long expectedBytes = endByte - startByte + 1;
-
-            while(totalRead < expectedBytes && !isStopped){
                 synchronized (this) {
-                    while(isPaused && !isStopped){
+                    while (isPaused && !isStopped) {
+                        try {
+                            chunkRepo.updateChunkProgress(chunk.getId(), currentOffset, "PAUSED");
+                        } catch (Exception e) {
+                        }
+
+                        logger.log("Chunk " + chunk.getId() + " paused at " + currentOffset);
                         wait();
+
+                        try {
+                            chunkRepo.updateChunkProgress(chunk.getId(), currentOffset, "DOWNLOADING");
+                        } catch (Exception e) {
+                        }
+                        logger.log("Chunk " + chunk.getId() + " resumed.");
                     }
                 }
-
-                if (isStopped) break;
-
-                bytesRead = inputStream.read(buffer);
-                if(bytesRead == -1){
+                if (isStopped)
                     break;
+
+                try {
+                    String byteRange = "bytes=" + currentOffset + "-" + endByte;
+                    conn = FileDownloader.safeOpenConnection(fileUrl, "GET", byteRange);
+
+                    int responseCode = conn.getResponseCode();
+                    if (responseCode != HttpURLConnection.HTTP_PARTIAL && responseCode != HttpURLConnection.HTTP_OK) {
+                        if (responseCode == 200 && currentOffset > 0) {
+                            throw new Exception("Server does not support partial requests");
+                        }
+                    }
+
+                    inputStream = conn.getInputStream();
+                    localFile.seek(currentOffset);
+
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    long bytesSinceLastSave = 0;
+                    final long SAVE_INTERVAL = 64 * 1024;
+
+                    while (currentOffset <= endByte && !isStopped) {
+                        synchronized (this) {
+                            while (isPaused && !isStopped) {
+                                try {
+                                    chunkRepo.updateChunkProgress(chunk.getId(), currentOffset, "PAUSED");
+                                } catch (Exception e) {
+                                }
+                                wait();
+                                try {
+                                    chunkRepo.updateChunkProgress(chunk.getId(), currentOffset, "DOWNLOADING");
+                                } catch (Exception e) {
+                                }
+                            }
+                        }
+                        if (isStopped)
+                            break;
+
+                        bytesRead = inputStream.read(buffer);
+                        if (bytesRead == -1)
+                            break;
+
+                        retryCount = 0;
+                        long remaining = endByte - currentOffset + 1;
+                        int toWrite = (int) Math.min(bytesRead, remaining);
+
+                        localFile.write(buffer, 0, toWrite);
+                        currentOffset += toWrite;
+
+                        downloadManager.onChunkProgress(downloadId, toWrite);
+
+                        bytesSinceLastSave += toWrite;
+                        if (bytesSinceLastSave >= SAVE_INTERVAL) {
+                            chunkRepo.updateChunkProgress(chunk.getId(), currentOffset, "DOWNLOADING");
+                            bytesSinceLastSave = 0;
+                        }
+
+                        if (toWrite < bytesRead)
+                            break;
+                    }
+
+                    if (currentOffset > endByte) {
+                        chunkRepo.updateChunkProgress(chunk.getId(), currentOffset, "COMPLETED");
+                        break;
+                    }
+
+                } catch (Exception e) {
+                    if (isStopped)
+                        break;
+                    retryCount++;
+                    if (retryCount > MAX_RETRIES)
+                        throw e;
+
+                    logger.error("Chunk " + chunk.getId() + " retry " + retryCount + ": " + e.getMessage());
+
+                    closeQuietly(inputStream);
+                    disconnectQuietly(conn);
+
+                    Thread.sleep(Math.min(1000L * retryCount, 5000L));
                 }
-
-                long remaining = expectedBytes - totalRead;
-                int toWrite = (int) Math.min(bytesRead, remaining);
-
-                localFile.write(buffer, 0, toWrite);
-
-                totalRead += toWrite;
-
-                downloadManager.onChunkProgress(downloadId, toWrite);
-
-                if (toWrite < bytesRead) break;
             }
-
         } catch (Exception e) {
-            System.err.println("Error in download thread " + taskId + ": " + e.getMessage());
-            return new ChunkResult(taskId, totalRead, 0, e);
+            logger.error("Chunk " + chunk.getId() + " failed: " + e.getMessage());
+            return new ChunkResult(chunk.getId(), 0, 0, e);
         } finally {
-            try {
-                if(inputStream != null) inputStream.close();
-                if(conn != null) conn.disconnect();
-                if(localFile != null) localFile.close();
-            }catch (Exception ex) {
-                ex.printStackTrace();
-            }
+            closeQuietly(inputStream);
+            disconnectQuietly(conn);
+            closeQuietly(localFile);
         }
-        return new ChunkResult(taskId, totalRead, 0, null);
+        return new ChunkResult(chunk.getId(), 0, 0, null);
     }
 
-
-    public void pauseDownload(){
+    public void pauseDownload() {
         synchronized (this) {
             isPaused = true;
         }
     }
 
-    public void resumeDownload(){
+    public void resumeDownload() {
         synchronized (this) {
             isPaused = false;
             notifyAll();
         }
     }
 
-    public void stopDownload(){
+    public void stopDownload() {
         synchronized (this) {
             isStopped = true;
             isPaused = false;
             notifyAll();
+        }
+    }
+
+    private void closeQuietly(java.io.Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void disconnectQuietly(HttpURLConnection c) {
+        if (c != null) {
+            try {
+                c.disconnect();
+            } catch (Exception ignored) {
+            }
         }
     }
 }
