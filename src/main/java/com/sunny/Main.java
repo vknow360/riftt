@@ -7,24 +7,22 @@ import com.sunny.model.DownloadStatus;
 public class Main {
 
     public static void main(String[] args) {
+        long start = System.currentTimeMillis();
         DownloadManager manager = null;
         try {
-            // Initialize manager
-            manager = new DownloadManager();
+            manager = new DownloadManager(3, 4);
             System.out.println("Download Manager initialized with In-Memory Coordinator");
 
-            // Create download object
             Download download = new Download();
-            download.setFilename( "chetanasaathi.pptx");
-            download.setUrl("https://sunnythedeveloper.in/wp-content/uploads/2024/05/chetanasaathi.pptx");
-            download.setDownloadPath("C:\\Users\\vknow\\Downloads\\chetanasaathi.pptx");
-            download.setThreadCount(4);
+            download.setFilename("500MB.zip");
+            download.setUrl("https://mmatechnical.com/Download/Download-Test-File/(MMA)-500MB.zip");
+            download.setDownloadPath("C:\\Users\\vknow\\Downloads\\500MB.zip");
+            download.setThreadCount(16);
 
-            // Add to database
+
             int downloadId = manager.addDownload(download);
             System.out.println("Download added with ID: " + downloadId);
 
-            // Start download
             manager.startDownload(downloadId);
             System.out.println("Download started!");
 
@@ -41,6 +39,17 @@ public class Main {
             if(manager != null) {
                 manager.shutDown();
             }
+            long end = System.currentTimeMillis();
+            System.out.println(parseTime(end-start));
         }
+    }
+
+    private static String parseTime(long time) {
+        long seconds = time / 1000;
+        long minutes = seconds / 60;
+        long hours = minutes / 60;
+        seconds %= 60;
+        minutes %= 60;
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds);
     }
 }
