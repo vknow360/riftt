@@ -87,13 +87,9 @@ public class DownloadTask implements Callable<ChunkResult> {
                                 : "bytes=" + currentOffset + "-" + endByte;
                     }
 
-                    logger.log("Chunk " + chunk.getId() + " connecting. Range: "
-                            + (byteRange == null ? "Full File" : byteRange));
-
                     conn = FileDownloader.safeOpenConnection(fileUrl, "GET", byteRange);
 
                     int responseCode = conn.getResponseCode();
-                    logger.log("Chunk " + chunk.getId() + " response code: " + responseCode);
 
                     if (responseCode >= 400) {
                         throw new Exception("Server returned HTTP " + responseCode);
@@ -112,9 +108,6 @@ public class DownloadTask implements Callable<ChunkResult> {
                     int bytesRead;
                     long bytesSinceLastSave = 0;
                     final long SAVE_INTERVAL = 64 * 1024;
-
-                    logger.log("Chunk " + chunk.getId() + " starting read loop. Offset: " + currentOffset + ", End: "
-                            + endByte);
 
                     while ((endByte == -1 || currentOffset <= endByte) && !isStopped) {
                         synchronized (this) {

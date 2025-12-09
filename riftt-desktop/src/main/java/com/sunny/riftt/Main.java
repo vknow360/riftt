@@ -20,7 +20,7 @@ public class Main {
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) {
-            //ignored.printStackTrace();
+            // ignored.printStackTrace();
         }
 
         SwingUtilities.invokeLater(() -> {

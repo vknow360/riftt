@@ -26,9 +26,6 @@ public class FileDownloader {
         conn.setRequestProperty("Sec-Fetch-Mode", "cors");
         conn.setRequestProperty("Sec-Fetch-Site", "same-origin");
 
-        // Do NOT set Referer to self/host automatically, as this triggers 403s on many
-        // CDNs/Anti-bot
-        // If needed, it should be passed explicitly, but for now we omit it.
     }
 
     private boolean isOk(int code) {

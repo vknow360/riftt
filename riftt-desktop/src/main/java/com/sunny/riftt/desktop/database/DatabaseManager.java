@@ -1,6 +1,7 @@
-package com.sunny.riftt.database;
+package com.sunny.riftt.desktop.database;
 
 import com.sunny.riftt.utils.FileUtils;
+import com.sunny.riftt.desktop.database.IConnectionProvider;
 
 import java.io.File;
 import java.sql.Connection;
@@ -8,7 +9,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-public class DatabaseManager {
+public class DatabaseManager implements IConnectionProvider {
 
     private static DatabaseManager instance;
 
@@ -22,6 +23,7 @@ public class DatabaseManager {
         DB_PATH = getDBPath();
     }
 
+    @Override
     public Connection getConnection() {
         try {
             if (connection == null || connection.isClosed()) {
@@ -48,7 +50,6 @@ public class DatabaseManager {
     }
 
     public void initializeDatabase() {
-
         String sql = "CREATE TABLE IF NOT EXISTS downloads (\n" +
                 "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
                 "    filename VARCHAR(255),\n" +

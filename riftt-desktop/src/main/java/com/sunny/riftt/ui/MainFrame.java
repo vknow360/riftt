@@ -4,19 +4,27 @@ import com.sunny.riftt.downloader.DownloadCallback;
 import com.sunny.riftt.downloader.DownloadManager;
 import com.sunny.riftt.model.Download;
 import com.sunny.riftt.model.DownloadStatus;
+import com.sunny.riftt.util.FilenameUtils;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.File;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainFrame extends JFrame {
 
-    private JTable downloadTable;
-    private DownloadsTableModel tableModel;
     private final DownloadManager downloadManager;
+    private final Map<Integer, DownloadCard> cardMap = new HashMap<>();
 
+    private JPanel listPanel;
+    private Integer selectedDownloadId = null;
+
+    // Toolbar Buttons
     private JButton addButton;
     private JButton pauseButton;
     private JButton resumeButton;
@@ -28,106 +36,138 @@ public class MainFrame extends JFrame {
         this.downloadManager = manager;
         initLookAndFeel();
         initUI();
-        initListeners();
         loadExistingDownloads();
     }
 
     private void initLookAndFeel() {
         try {
+            // System Look and Feel
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+            // Global fonts
+            UIManager.put("Label.font", new Font("Segoe UI", Font.PLAIN, 12));
+            UIManager.put("Button.font", new Font("Segoe UI", Font.PLAIN, 12));
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
     private void initUI() {
-        setTitle("FluxDL - Advanced Download Manager");
-        setSize(950, 600);
+        setTitle("riftt - Modern Downloader");
+        setSize(1000, 700);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
+        getContentPane().setBackground(new Color(245, 245, 245)); // Light background
         setLayout(new BorderLayout());
 
         // --- Toolbar ---
         JToolBar toolBar = new JToolBar();
         toolBar.setFloatable(false);
-        toolBar.setMargin(new Insets(5, 5, 5, 5));
-        toolBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY));
+        toolBar.setBackground(Color.WHITE);
+        toolBar.setBorder(new EmptyBorder(10, 10, 10, 10));
 
-        addButton = createToolbarButton("Add URL", "Add a new download");
-        pauseButton = createToolbarButton("Pause", "Pause selected");
-        resumeButton = createToolbarButton("Resume", "Resume selected");
-        cancelButton = createToolbarButton("Cancel", "Cancel selected");
-        removeButton = createToolbarButton("Remove", "Remove selected");
-        removeAllButton = createToolbarButton("Remove All", "Clear all downloads");
+        addButton = createStyledButton("Add URL", new Color(0, 120, 215));
+        pauseButton = createStyledButton("Pause", new Color(200, 200, 200));
+        resumeButton = createStyledButton("Resume", new Color(200, 200, 200));
+        cancelButton = createStyledButton("Cancel", new Color(200, 200, 200));
+        removeButton = createStyledButton("Remove", new Color(200, 200, 200));
+        removeAllButton = createStyledButton("Clear All", new Color(220, 50, 50));
+
+        // Fix text color for light buttons
+        pauseButton.setForeground(Color.BLACK);
+        resumeButton.setForeground(Color.BLACK);
+        cancelButton.setForeground(Color.BLACK);
+        removeButton.setForeground(Color.BLACK);
 
         toolBar.add(addButton);
-        toolBar.addSeparator(new Dimension(10, 0));
+        toolBar.add(Box.createHorizontalStrut(15));
         toolBar.add(pauseButton);
+        toolBar.add(Box.createHorizontalStrut(5));
         toolBar.add(resumeButton);
+        toolBar.add(Box.createHorizontalStrut(5));
         toolBar.add(cancelButton);
-        toolBar.addSeparator(new Dimension(10, 0));
+        toolBar.add(Box.createHorizontalStrut(15));
         toolBar.add(removeButton);
+        toolBar.add(Box.createHorizontalStrut(5));
         toolBar.add(removeAllButton);
-        toolBar.addSeparator(new Dimension(10, 0));
-        JButton settingsButton = createToolbarButton("Settings", "Open Settings");
+
+        toolBar.add(Box.createHorizontalGlue()); // Right align settings
+        JButton settingsButton = createStyledButton("Settings", new Color(200, 200, 200));
+        settingsButton.setForeground(Color.BLACK);
         settingsButton.addActionListener(e -> new SettingsDialog(this).setVisible(true));
         toolBar.add(settingsButton);
 
         add(toolBar, BorderLayout.NORTH);
 
-        // --- Table ---
-        tableModel = new DownloadsTableModel();
-        downloadTable = new JTable(tableModel);
+        // --- List View (Cards) ---
+        listPanel = new JPanel();
+        listPanel.setLayout(new BoxLayout(listPanel, BoxLayout.Y_AXIS));
+        listPanel.setBackground(new Color(245, 245, 245));
 
-        // UI Enhancements
-        downloadTable.setRowHeight(35);
-        downloadTable.setShowGrid(false);
-        downloadTable.setIntercellSpacing(new Dimension(0, 5));
-        downloadTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        downloadTable.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        downloadTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 14));
+        // Filler to push items to top
+        listPanel.add(Box.createVerticalGlue());
 
-        // Progress Renderer (Column 1)
-        downloadTable.getColumnModel().getColumn(1).setCellRenderer(new ProgressBarRenderer());
+        JScrollPane scrollPane = new JScrollPane(listPanel);
+        scrollPane.setBorder(null);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.getViewport().setBackground(new Color(245, 245, 245));
 
-        JScrollPane scrollPane = new JScrollPane(downloadTable);
-        scrollPane.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         add(scrollPane, BorderLayout.CENTER);
 
         // --- Status Bar ---
         JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        statusBar.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        JLabel statusLabel = new JLabel("Double-click a download to view thread details.");
+        statusBar.setBackground(new Color(235, 235, 235));
+        JLabel statusLabel = new JLabel(" Select a download to perform actions.");
         statusLabel.setForeground(Color.GRAY);
         statusBar.add(statusLabel);
-        statusBar.setBorder(BorderFactory.createEtchedBorder());
         add(statusBar, BorderLayout.SOUTH);
+
+        initActionListeners();
     }
 
-    private JButton createToolbarButton(String text, String tooltip) {
+    private JButton createStyledButton(String text, Color bg) {
         JButton btn = new JButton(text);
-        btn.setToolTipText(tooltip);
+        btn.setBackground(bg);
+        btn.setForeground(Color.WHITE); // Default white text, overridden for light buttons
         btn.setFocusPainted(false);
-        btn.setMargin(new Insets(5, 5, 5, 5));
-        btn.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        btn.setBorderPainted(false);
+        btn.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btn.setBorder(new EmptyBorder(8, 15, 8, 15));
         return btn;
     }
 
-    private void initListeners() {
-        // Double-click Config
-        downloadTable.addMouseListener(new MouseAdapter() {
+    private void addDownloadCard(Download download) {
+        DownloadCard card = new DownloadCard(download);
+
+        // Click listener for selection
+        card.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                selectDownload(download.getId());
                 if (e.getClickCount() == 2) {
-                    int row = downloadTable.getSelectedRow();
-                    if (row >= 0) {
-                        Download d = tableModel.getDownloadAt(row);
-                        openDetailsDialog(d);
-                    }
+                    DownloadDetailsDialog dialog = new DownloadDetailsDialog(MainFrame.this, downloadManager,
+                            download.getId(), download.getFilename());
+                    dialog.setVisible(true);
                 }
             }
         });
 
+        // Insert at top (index 0), keeping glue at bottom
+        listPanel.add(card, 0);
+        listPanel.revalidate();
+        listPanel.repaint();
+
+        cardMap.put(download.getId(), card);
+    }
+
+    private void selectDownload(int id) {
+        this.selectedDownloadId = id;
+        // Visual feedback could be added to cards here (e.g. border highlight)
+        // For simplicity, just tracking state
+    }
+
+    private void initActionListeners() {
         addButton.addActionListener(e -> {
             AddDownloadDialog dialog = new AddDownloadDialog(this);
             dialog.setVisible(true);
@@ -141,19 +181,18 @@ public class MainFrame extends JFrame {
                 new SwingWorker<String, Void>() {
                     @Override
                     protected String doInBackground() throws Exception {
-                        return com.sunny.riftt.util.FilenameUtils.resolveFilename(url);
+                        return FilenameUtils.resolveFilename(url);
                     }
 
                     @Override
                     protected void done() {
                         try {
                             String filename = get();
-                            if (filename == null || filename.isEmpty()) {
+                            if (filename == null || filename.isEmpty())
                                 filename = "download.file";
-                            }
 
                             // Unique Filename Logic
-                            java.io.File file = new java.io.File(path, filename);
+                            File file = new File(path, filename);
                             String nameWithoutExt = filename;
                             String ext = "";
                             int dotIndex = filename.lastIndexOf('.');
@@ -165,7 +204,7 @@ public class MainFrame extends JFrame {
                             int counter = 1;
                             while (file.exists()) {
                                 String newName = nameWithoutExt + " (" + counter + ")" + ext;
-                                file = new java.io.File(path, newName);
+                                file = new File(path, newName);
                                 counter++;
                             }
 
@@ -178,19 +217,18 @@ public class MainFrame extends JFrame {
                             download.setFilename(filename);
                             download.setThreadCount(16);
 
-                            // Add to Manager and Get ID
+                            // Manager
                             int id = downloadManager.addDownload(download, createCallback());
 
-                            // Add to Table
-                            tableModel.addDownload(download);
+                            // UI
+                            addDownloadCard(download);
 
                             // Start
                             downloadManager.startDownload(id);
 
                         } catch (Exception ex) {
                             ex.printStackTrace();
-                            JOptionPane.showMessageDialog(MainFrame.this,
-                                    "Error resolving filename: " + ex.getMessage());
+                            JOptionPane.showMessageDialog(MainFrame.this, "Error: " + ex.getMessage());
                         }
                     }
                 }.execute();
@@ -198,41 +236,35 @@ public class MainFrame extends JFrame {
         });
 
         pauseButton.addActionListener(e -> {
-            int row = downloadTable.getSelectedRow();
-            if (row >= 0) {
-                Download d = tableModel.getDownloadAt(row);
+            if (selectedDownloadId != null) {
                 try {
-                    downloadManager.pauseDownload(d.getId());
+                    downloadManager.pauseDownload(selectedDownloadId);
                 } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(this, "Error pausing: " + ex.getMessage());
+                    ex.printStackTrace();
                 }
             }
         });
 
         resumeButton.addActionListener(e -> {
-            int row = downloadTable.getSelectedRow();
-            if (row >= 0) {
-                Download d = tableModel.getDownloadAt(row);
-                downloadManager.resumeDownload(d.getId());
-            }
+            if (selectedDownloadId != null)
+                downloadManager.resumeDownload(selectedDownloadId);
         });
 
         cancelButton.addActionListener(e -> {
-            int row = downloadTable.getSelectedRow();
-            if (row >= 0) {
-                Download d = tableModel.getDownloadAt(row);
-                downloadManager.cancelDownload(d.getId());
-            }
+            if (selectedDownloadId != null)
+                downloadManager.cancelDownload(selectedDownloadId);
         });
 
         removeButton.addActionListener(e -> {
-            int row = downloadTable.getSelectedRow();
-            if (row >= 0) {
-                Download d = tableModel.getDownloadAt(row);
-                downloadManager.removeDownload(d.getId());
-                tableModel.removeDownload(d.getId());
-            } else {
-                JOptionPane.showMessageDialog(this, "Select a download to remove.");
+            if (selectedDownloadId != null) {
+                downloadManager.removeDownload(selectedDownloadId);
+                DownloadCard card = cardMap.remove(selectedDownloadId);
+                if (card != null) {
+                    listPanel.remove(card);
+                    listPanel.revalidate();
+                    listPanel.repaint();
+                }
+                selectedDownloadId = null;
             }
         });
 
@@ -241,21 +273,20 @@ public class MainFrame extends JFrame {
                     "Remove ALL downloads? This cannot be undone.", "Confirm Remove All", JOptionPane.YES_NO_OPTION);
             if (confirm == JOptionPane.YES_OPTION) {
                 downloadManager.removeAllDownloads();
-                tableModel.clearAll();
+                listPanel.removeAll();
+                listPanel.add(Box.createVerticalGlue()); // Restore glue
+                cardMap.clear();
+                selectedDownloadId = null;
+                listPanel.revalidate();
+                listPanel.repaint();
             }
         });
     }
 
-    private void openDetailsDialog(Download d) {
-        DownloadDetailsDialog dialog = new DownloadDetailsDialog(this, downloadManager, d.getId(), d.getFilename());
-        dialog.setVisible(true);
-    }
-
     private void loadExistingDownloads() {
         List<Download> downloads = downloadManager.getAllDownloads();
-        tableModel.setDownloads(downloads);
-
         for (Download d : downloads) {
+            addDownloadCard(d);
             if (d.getStatus() != DownloadStatus.COMPLETED && d.getStatus() != DownloadStatus.CANCELED) {
                 downloadManager.registerCallback(d.getId(), createCallback());
             }
@@ -266,41 +297,45 @@ public class MainFrame extends JFrame {
         return new DownloadCallback() {
             @Override
             public void onStart(int id) {
-                SwingUtilities.invokeLater(() -> tableModel.updateStatus(id, DownloadStatus.DOWNLOADING));
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateStatus(DownloadStatus.DOWNLOADING)));
             }
 
             @Override
             public void onPause(int id) {
-                SwingUtilities.invokeLater(() -> tableModel.updateStatus(id, DownloadStatus.PAUSED));
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateStatus(DownloadStatus.PAUSED)));
             }
 
             @Override
             public void onResume(int id) {
-                SwingUtilities.invokeLater(() -> tableModel.updateStatus(id, DownloadStatus.DOWNLOADING));
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateStatus(DownloadStatus.DOWNLOADING)));
             }
 
             @Override
             public void onProgress(int id, long downloaded, long total, double progress) {
-                SwingUtilities.invokeLater(() -> tableModel.updateProgress(id, downloaded, total));
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateProgress(downloaded, total)));
             }
 
             @Override
             public void onDownloadCompleted(int id) {
-                SwingUtilities.invokeLater(() -> {
-                    tableModel.updateStatus(id, DownloadStatus.COMPLETED);
-                });
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateStatus(DownloadStatus.COMPLETED)));
             }
 
             @Override
             public void onDownloadFailed(int id, String message) {
-                SwingUtilities.invokeLater(() -> tableModel.updateStatus(id, DownloadStatus.FAILED));
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateStatus(DownloadStatus.FAILED)));
             }
 
             @Override
             public void onDownloadCancelled(int id) {
-                SwingUtilities.invokeLater(() -> tableModel.updateStatus(id, DownloadStatus.CANCELED));
+                SwingUtilities.invokeLater(() -> updateCard(id, c -> c.updateStatus(DownloadStatus.CANCELED)));
             }
         };
+    }
+
+    private void updateCard(int id, java.util.function.Consumer<DownloadCard> action) {
+        DownloadCard c = cardMap.get(id);
+        if (c != null)
+            action.accept(c);
     }
 
     public void showFrame() {

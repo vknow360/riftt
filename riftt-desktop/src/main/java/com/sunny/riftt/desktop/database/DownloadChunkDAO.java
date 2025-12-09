@@ -1,4 +1,4 @@
-package com.sunny.riftt.database;
+package com.sunny.riftt.desktop.database;
 
 import com.sunny.riftt.model.DownloadChunk;
 import java.sql.PreparedStatement;
@@ -9,9 +9,15 @@ import java.util.List;
 
 public class DownloadChunkDAO {
 
+    private final IConnectionProvider connectionProvider;
+
+    public DownloadChunkDAO(IConnectionProvider connectionProvider) {
+        this.connectionProvider = connectionProvider;
+    }
+
     public void createChunks(List<DownloadChunk> chunks) {
         String sql = "INSERT INTO download_chunks (download_id, start_byte, end_byte, current_offset, status) VALUES (?, ?, ?, ?, ?)";
-        try (PreparedStatement st = DatabaseManager.getInstance().getConnection().prepareStatement(sql)) {
+        try (PreparedStatement st = connectionProvider.getConnection().prepareStatement(sql)) {
             for (DownloadChunk chunk : chunks) {
                 st.setInt(1, chunk.getDownloadId());
                 st.setLong(2, chunk.getStartByte());
@@ -29,7 +35,7 @@ public class DownloadChunkDAO {
     public List<DownloadChunk> getChunksForDownload(int downloadId) {
         List<DownloadChunk> chunks = new ArrayList<>();
         String sql = "SELECT * FROM download_chunks WHERE download_id = ? ORDER BY start_byte ASC";
-        try (PreparedStatement st = DatabaseManager.getInstance().getConnection().prepareStatement(sql)) {
+        try (PreparedStatement st = connectionProvider.getConnection().prepareStatement(sql)) {
             st.setInt(1, downloadId);
             try (ResultSet rs = st.executeQuery()) {
                 while (rs.next()) {
@@ -51,7 +57,7 @@ public class DownloadChunkDAO {
 
     public synchronized void updateChunkProgress(int chunkId, long currentOffset, String status) {
         String sql = "UPDATE download_chunks SET current_offset = ?, status = ? WHERE id = ?";
-        try (PreparedStatement st = DatabaseManager.getInstance().getConnection().prepareStatement(sql)) {
+        try (PreparedStatement st = connectionProvider.getConnection().prepareStatement(sql)) {
             st.setLong(1, currentOffset);
             st.setString(2, status);
             st.setInt(3, chunkId);

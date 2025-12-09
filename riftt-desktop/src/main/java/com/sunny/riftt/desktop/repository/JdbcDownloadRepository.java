@@ -1,15 +1,18 @@
 package com.sunny.riftt.desktop.repository;
 
 import com.sunny.riftt.core.IDownloadRepository;
-import com.sunny.riftt.database.DownloadDAO;
+import com.sunny.riftt.desktop.database.DownloadDAO;
 import com.sunny.riftt.model.Download;
+
 import com.sunny.riftt.model.DownloadStatus;
 import java.sql.Timestamp;
 import java.util.List;
 
+import com.sunny.riftt.desktop.database.DatabaseManager;
+
 public class JdbcDownloadRepository implements IDownloadRepository {
 
-    private final DownloadDAO dao = new DownloadDAO();
+    private final DownloadDAO dao = new DownloadDAO(DatabaseManager.getInstance());
 
     @Override
     public int insertDownload(Download download) {
